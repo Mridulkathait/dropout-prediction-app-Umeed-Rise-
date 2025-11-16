@@ -128,7 +128,7 @@ def show_classification_metrics(y_true, y_pred, y_proba):
             st.write("AUC could not be computed.")
     cm = confusion_matrix(y_true, y_pred)
     fig, ax = plt.subplots()
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax")
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
     ax.set_xlabel("Predicted")
     ax.set_ylabel("Actual")
     st.pyplot(fig)
