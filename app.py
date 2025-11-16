@@ -83,7 +83,7 @@ def build_preprocessor(df, ignore_cols):
 
     cat_pipeline = Pipeline([
         ("imputer", SimpleImputer(strategy="constant", fill_value="__missing__")),
-        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse=False))
+        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
     ])
 
     preprocessor = ColumnTransformer([
@@ -92,6 +92,7 @@ def build_preprocessor(df, ignore_cols):
     ], remainder="drop")
 
     return preprocessor, numeric_feats, cat_feats
+
 
 def train_model(X_train, y_train, use_xgb=True, n_estimators=150):
     # Train XGBoost where possible, fallback to RandomForest
