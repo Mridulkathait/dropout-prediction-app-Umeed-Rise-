@@ -1,15 +1,16 @@
 # app.py
-# streamlit
+# Umeed Rise – AI-Based Student Dropout Prediction & Counseling
+# Streamlit UI, robust preprocessing, XGBoost/RandomForest training, SHAP explainability, and counseling suggestions.
+
 import streamlit as st
-# data
 import pandas as pd
 import numpy as np
-# plotting
+
 import plotly.express as px
 import plotly.graph_objects as go
 import seaborn as sns
 import matplotlib.pyplot as plt
-# sklearn
+
 from sklearn.model_selection import train_test_split
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -18,105 +19,67 @@ from sklearn.pipeline import Pipeline
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc_auc_score, confusion_matrix
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.utils.multiclass import type_of_target
-# shap
-import shap
-# xgboost
+
 from xgboost import XGBClassifier
-# utils
+import shap
 from typing import List, Tuple, Optional, Dict, Any
 
-# page setup
+# Page config
 st.set_page_config(page_title="Umeed Rise – Dropout Prediction & Counseling", page_icon="🎓", layout="wide")
 
-# theme and styles
+# Modern UI styles
 APP_CSS = """
 <style>
 :root {
-  --bg-grad-start: #f3f5ff;
-  --bg-grad-end: #e8ecff;
-  --card-bg: #ffffff;
-  --primary: #5a67d8;
-  --secondary: #7f9cf5;
-  --accent: #a78bfa;
-  --success: #10b981;
-  --warning: #f59e0b;
-  --danger: #ef4444;
+  --bg-grad-start: #f3f5ff; --bg-grad-end: #e8ecff;
+  --card-bg: #ffffff; --primary: #5a67d8; --secondary: #7f9cf5; --accent: #a78bfa;
 }
-.stApp {
-  background: linear-gradient(135deg, var(--bg-grad-start), var(--bg-grad-end));
-}
+.stApp { background: linear-gradient(135deg, var(--bg-grad-start), var(--bg-grad-end)); }
 .block-container { padding-top: 1rem; }
-.umeed-card {
-  background: var(--card-bg);
-  border-radius: 16px;
-  padding: 1rem 1.2rem;
-  box-shadow: 0 10px 30px rgba(90,103,216,0.12);
-  border: 1px solid rgba(167,139,250,0.2);
-  transition: transform .2s ease, box-shadow .2s ease;
-}
+.umeed-card { background: var(--card-bg); border-radius: 16px; padding: 1rem 1.2rem; box-shadow: 0 10px 30px rgba(90,103,216,0.12); border: 1px solid rgba(167,139,250,0.2); transition: transform .2s ease, box-shadow .2s ease; }
 .umeed-card:hover { transform: translateY(-2px); box-shadow: 0 14px 40px rgba(90,103,216,0.18); }
-.umeed-header {
-  font-size: 1.25rem; font-weight: 700; color: #2d3748; margin-bottom: .75rem;
-  display: flex; align-items: center; gap: .5rem;
-}
-.umeed-pill {
-  display:inline-block; padding:.25rem .6rem; border-radius:24px; font-size:.85rem; font-weight:600;
-  background: rgba(90,103,216,0.12); color: var(--primary);
-}
-.umeed-badge { border: 1px dashed rgba(167,139,250,0.4); padding:.5rem .75rem; border-radius:12px; }
-.umeed-footer { font-size:.9rem; color:#4a5568; }
+.umeed-header { font-size: 1.25rem; font-weight: 700; color: #2d3748; margin-bottom: .75rem; display: flex; align-items: center; gap: .5rem; }
+.umeed-pill { display:inline-block; padding:.25rem .6rem; border-radius:24px; font-size:.85rem; font-weight:600; background: rgba(90,103,216,0.12); color: var(--primary); }
 .umeed-small { font-size:.85rem; color:#4a5568; }
 .umeed-risk-low { background: rgba(16,185,129,0.08); color:#065f46; }
 .umeed-risk-med { background: rgba(245,158,11,0.10); color:#7c5014; }
 .umeed-risk-high { background: rgba(239,68,68,0.10); color:#7f1d1d; }
-.umeed-section { margin-bottom: 1rem; }
 </style>
 """
 st.markdown(APP_CSS, unsafe_allow_html=True)
 
-# session bootstrap
+# Session bootstrap
 for k, v in {
-    "model": None,
-    "pipeline": None,
-    "feature_cols": None,
-    "num_cols": None,
-    "cat_cols": None,
-    "target_col": None,
-    "id_col": None,
-    "classes_": None,
-    "positive_class": None,
-    "metrics": None,
-    "X_test": None,
-    "y_test": None,
-    "proba_test": None,
-    "pred_test": None,
-    "shap_values": None,
-    "explainer": None,
+    "model": None, "pipeline": None, "feature_cols": None,
+    "num_cols": None, "cat_cols": None, "target_col": None,
+    "id_col": None, "metrics": None, "X_test": None,
+    "y_test": None, "proba_test": None, "pred_test": None,
+    "shap_sample": 300
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# helpers
+# Data loading
 @st.cache_data(show_spinner=False)
-def load_data(file_bytes: bytes) -> pd.DataFrame:
+def load_data(file) -> pd.DataFrame:
     try:
-        df = pd.read_csv(file_bytes, low_memory=False)
+        return pd.read_csv(file, low_memory=False)
     except Exception:
-        df = pd.read_csv(file_bytes, low_memory=False, encoding_errors="ignore")
-    return df
+        return pd.read_csv(file, low_memory=False, encoding_errors="ignore")
 
+# Heuristics for target and ID detection
 def detect_target_column(df: pd.DataFrame) -> Optional[str]:
     candidates = ["dropout","is_dropout","at_risk","risk","label","target","outcome","status","y"]
     cols_lower = {c.lower(): c for c in df.columns}
     for c in candidates:
         if c in cols_lower:
             return cols_lower[c]
-    bin_cols = []
+    # fallback: any binary-like column
     for c in df.columns:
         u = df[c].dropna().unique()
         if len(u) == 2:
-            bin_cols.append(c)
-    return bin_cols[0] if bin_cols else None
+            return c
+    return None
 
 def detect_id_column(df: pd.DataFrame) -> Optional[str]:
     candidates = ["student_id","id","studentid","roll","roll_no","roll_number","admission_no","enrollment","enrollment_id","sid"]
@@ -124,36 +87,35 @@ def detect_id_column(df: pd.DataFrame) -> Optional[str]:
     for c in candidates:
         if c in cols_lower:
             return cols_lower[c]
-    likely = [c for c in df.columns if "id" in c.lower() or "roll" in c.lower() or "enroll" in c.lower()]
+    likely = [c for c in df.columns if any(tok in c.lower() for tok in ["id","roll","enroll"])]
     return likely[0] if likely else None
 
-def choose_positive_class(y: pd.Series, target_name: str) -> Any:
-    vals = pd.Series(y).dropna().astype(str).str.lower()
-    pos_tokens = ["dropout","yes","true","1","high","risk","at_risk"]
+# Positive class choice
+def choose_positive_class(y: pd.Series) -> Any:
+    pos_tokens = {"dropout","yes","true","1","high","risk","at_risk"}
     uniques = pd.Series(y).dropna().unique().tolist()
     for u in uniques:
-        if str(u).lower() in pos_tokens:
+        if str(u).strip().lower() in pos_tokens:
             return u
+    # minority class as positive if no semantic match
     vc = pd.Series(y).value_counts()
     return vc.idxmin()
 
+# Feature aligner to ensure new data matches training columns
 def build_aligner(feature_cols: List[str]):
     from sklearn.base import BaseEstimator, TransformerMixin
     class FeatureAligner(BaseEstimator, TransformerMixin):
-        def __init__(self, cols: List[str]):
-            self.cols = cols
-        def fit(self, X, y=None):
-            return self
+        def __init__(self, cols: List[str]): self.cols = cols
+        def fit(self, X, y=None): return self
         def transform(self, X):
             Xc = X.copy()
             for c in self.cols:
-                if c not in Xc.columns:
-                    Xc[c] = np.nan
-            Xc = Xc[self.cols]
-            return Xc
+                if c not in Xc.columns: Xc[c] = np.nan
+            return Xc[self.cols]
     return FeatureAligner(feature_cols)
 
-def preprocess(df: pd.DataFrame, target_col: str, id_col: Optional[str]) -> Tuple[pd.DataFrame, pd.Series, Pipeline, List[str], List[str], List[str], Any]:
+# Preprocessing
+def preprocess(df: pd.DataFrame, target_col: str, id_col: Optional[str]):
     work = df.copy()
     if id_col and id_col in work.columns:
         work = work.drop(columns=[id_col])
@@ -163,68 +125,43 @@ def preprocess(df: pd.DataFrame, target_col: str, id_col: Optional[str]) -> Tupl
     num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
     cat_cols = X.select_dtypes(exclude=[np.number]).columns.tolist()
     for b in X.select_dtypes(include=["bool"]).columns:
-        if b not in cat_cols:
-            cat_cols.append(b)
+        if b not in cat_cols: cat_cols.append(b)
 
-    y_type = type_of_target(y_raw)
-    if y_type in ("binary","multiclass"):
-        classes = pd.Series(y_raw).dropna().unique().tolist()
+    # label encoding to 0/1 with chosen positive class
+    pos_class = choose_positive_class(y_raw)
+    classes = pd.Series(y_raw).dropna().unique().tolist()
+    # map pos_class -> 1, others -> 0 (binary); for multiclass, keep ordinal but positify pos_class
+    if len(classes) == 2:
+        le_map = {pos_class: 1}
+        for c in classes:
+            if c not in le_map: le_map[c] = 0
+        y = y_raw.map(le_map).fillna(0).astype(int)
     else:
-        if y_raw.nunique() <= 10:
-            classes = pd.Series(y_raw).dropna().unique().tolist()
-        else:
-            classes = sorted(pd.Series(y_raw).dropna().unique().tolist())
-    pos_class = choose_positive_class(y_raw, target_col)
-    le_map = {c: i for i, c in enumerate(sorted(classes, key=lambda x: 0 if x==pos_class else 1))}
-    y = y_raw.map(le_map).fillna(method="ffill").fillna(0).astype(int)
+        ordered = [pos_class] + [c for c in classes if c != pos_class]
+        le_map = {c: i for i, c in enumerate(ordered)}
+        y = y_raw.map(le_map).fillna(0).astype(int)
 
-    num_pipe = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler())
-    ])
-    cat_pipe = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("encoder", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
-    ])
-    ct = ColumnTransformer(
-        transformers=[
-            ("num", num_pipe, num_cols),
-            ("cat", cat_pipe, cat_cols)
-        ],
-        remainder="drop",
-        sparse_threshold=0.0
-    )
+    num_pipe = Pipeline([("imputer", SimpleImputer(strategy="median")), ("scaler", StandardScaler())])
+    cat_pipe = Pipeline([("imputer", SimpleImputer(strategy="most_frequent")), ("encoder", OneHotEncoder(handle_unknown="ignore", sparse_output=False))])
+    ct = ColumnTransformer([("num", num_pipe, num_cols), ("cat", cat_pipe, cat_cols)], remainder="drop", sparse_threshold=0.0)
+
     feature_cols = num_cols + cat_cols
     aligner = build_aligner(feature_cols)
-    pipe = Pipeline(steps=[
-        ("align", aligner),
-        ("preprocess", ct)
-    ])
+    pipe = Pipeline([("align", aligner), ("preprocess", ct)])
     return X, y, pipe, feature_cols, num_cols, cat_cols, le_map
 
-def make_model(algo: str = "XGBoost") -> Any:
+# Model factory
+def make_model(algo: str = "XGBoost"):
     if algo == "XGBoost":
         return XGBClassifier(
-            n_estimators=300,
-            max_depth=5,
-            learning_rate=0.05,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            reg_lambda=1.0,
-            random_state=42,
-            n_jobs=-1,
-            objective="binary:logistic"
+            n_estimators=300, max_depth=5, learning_rate=0.05,
+            subsample=0.8, colsample_bytree=0.8, reg_lambda=1.0,
+            random_state=42, n_jobs=-1, objective="binary:logistic"
         )
-    return RandomForestClassifier(
-        n_estimators=400,
-        max_depth=None,
-        min_samples_split=2,
-        min_samples_leaf=1,
-        random_state=42,
-        n_jobs=-1
-    )
+    return RandomForestClassifier(n_estimators=400, random_state=42, n_jobs=-1)
 
-def train_model(pipe: Pipeline, X: pd.DataFrame, y: pd.Series, algo_primary="XGBoost") -> Tuple[Pipeline, Any, Dict[str, float], np.ndarray, np.ndarray, pd.DataFrame, pd.Series]:
+# Training with fallback
+def train_model(pipe: Pipeline, X: pd.DataFrame, y: pd.Series, algo_primary="XGBoost"):
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42,
         stratify=y if len(pd.Series(y).unique()) > 1 else None
@@ -242,7 +179,8 @@ def train_model(pipe: Pipeline, X: pd.DataFrame, y: pd.Series, algo_primary="XGB
     pred = full.predict(X_test)
 
     acc = accuracy_score(y_test, pred)
-    precision, recall, f1, _ = precision_recall_fscore_support(y_test, pred, average="binary" if len(np.unique(y_test))==2 else "macro", zero_division=0)
+    avg = "binary" if len(np.unique(y_test))==2 else "macro"
+    precision, recall, f1, _ = precision_recall_fscore_support(y_test, pred, average=avg, zero_division=0)
     try:
         roc = roc_auc_score(y_test, proba[:,1]) if proba.shape[1] >= 2 else np.nan
     except Exception:
@@ -251,21 +189,18 @@ def train_model(pipe: Pipeline, X: pd.DataFrame, y: pd.Series, algo_primary="XGB
     metrics = {"Accuracy": acc, "Precision": precision, "Recall": recall, "F1": f1, "ROC-AUC": float(roc) if not np.isnan(roc) else np.nan}
     return full, clf, metrics, proba, pred, X_test, y_test
 
+# Risk buckets + counseling text
 def risk_bucket(p: float) -> str:
-    if p < 0.33:
-        return "Low"
-    elif p < 0.66:
-        return "Medium"
-    else:
-        return "High"
+    if p < 0.33: return "Low"
+    elif p < 0.66: return "Medium"
+    return "High"
 
 def counseling_for_risk(r: str) -> str:
-    if r == "Low":
-        return "Continue good performance; maintain consistency."
-    if r == "Medium":
-        return "Meet mentor; improve attendance and assignment submission."
+    if r == "Low": return "Continue good performance; maintain consistency."
+    if r == "Medium": return "Meet mentor; improve attendance and assignment submission."
     return "Schedule counseling; personalized academic support plan and mentor support."
 
+# Metrics UI
 def evaluate_model_ui(metrics: Dict[str, float], y_true: pd.Series, y_pred: np.ndarray):
     cmat = confusion_matrix(y_true, y_pred)
     df_cm = pd.DataFrame(cmat)
@@ -281,6 +216,7 @@ def evaluate_model_ui(metrics: Dict[str, float], y_true: pd.Series, y_pred: np.n
         st.plotly_chart(fig, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
+# Feature names from ColumnTransformer
 def get_feature_names_from_ct(ct: ColumnTransformer) -> List[str]:
     names = []
     for name, transformer, cols in ct.transformers_:
@@ -292,45 +228,51 @@ def get_feature_names_from_ct(ct: ColumnTransformer) -> List[str]:
             names.extend(list(ohe_names))
     return names
 
-def shap_explain(pipeline: Pipeline, X_sample: pd.DataFrame, max_samples: int = 500) -> Tuple[Any, Any, List[str], np.ndarray]:
-    if pipeline is None:
-        return None, None, [], np.array([])
+# Cached SHAP explainer
+@st.cache_resource
+def get_shap_explainer(pipeline: Pipeline):
+    if pipeline is None: return None, [], None
     pre = pipeline.named_steps["preprocess"]
     clf = pipeline.named_steps["clf"]
-    Xs = X_sample.copy()
-    Xt = pipeline.named_steps["align"].transform(Xs)
-    Xt = pre.transform(Xt)
-    f_names = get_feature_names_from_ct(pre)
+    feat_names = get_feature_names_from_ct(pre)
     try:
-        explainer = shap.Explainer(clf, Xt)
-        shap_values = explainer(Xt[:min(len(Xt), max_samples)])
+        # Prefer TreeExplainer for tree models for speed and stability
+        explainer = shap.TreeExplainer(clf)
     except Exception:
         explainer = shap.Explainer(clf)
-        shap_values = explainer(Xt[:min(len(Xt), max_samples)])
-    return explainer, shap_values, f_names, Xt
+    return explainer, feat_names, pre
 
+# Compute SHAP values with sample size
+def compute_shap_values(pipeline: Pipeline, X_sample: pd.DataFrame, max_samples: int = 300):
+    explainer, feat_names, pre = get_shap_explainer(pipeline)
+    if explainer is None: return None, None, [], np.array([])
+    Xt = pipeline.named_steps["align"].transform(X_sample.copy())
+    Xt = pre.transform(Xt)
+    n = min(len(Xt), max_samples)
+    try:
+        shap_values = explainer(Xt[:n])
+    except Exception:
+        shap_values = explainer.shap_values(Xt[:n])
+    return shap_values, Xt, feat_names, Xt[:n]
+
+# Predictions table for display/download
 def predictions_table(df_src: pd.DataFrame, id_col: Optional[str], proba: np.ndarray, pred: np.ndarray) -> pd.DataFrame:
     p1 = proba[:,1] if proba.shape[1] >= 2 else proba[:,0]
     risks = [risk_bucket(x) for x in p1]
     suggest = [counseling_for_risk(r) for r in risks]
-    out = pd.DataFrame({
-        "Risk Probability": p1,
-        "Risk Level": risks,
-        "Suggestion": suggest
-    })
+    out = pd.DataFrame({"Risk Probability": p1, "Risk Level": risks, "Suggestion": suggest})
     if id_col and id_col in df_src.columns:
         out[id_col] = df_src[id_col].values
         out = out[[id_col, "Risk Probability", "Risk Level", "Suggestion"]]
     return out.sort_values("Risk Probability", ascending=False)
 
+# Risk coloring
 def color_risk(val: str) -> str:
-    if val == "High":
-        return f'background-color: rgba(239,68,68,0.12); color: #7f1d1d'
-    if val == "Medium":
-        return f'background-color: rgba(245,158,11,0.12); color: #7c5014'
-    return f'background-color: rgba(16,185,129,0.12); color: #065f46'
+    if val == "High": return 'background-color: rgba(239,68,68,0.12); color: #7f1d1d'
+    if val == "Medium": return 'background-color: rgba(245,158,11,0.12); color: #7c5014'
+    return 'background-color: rgba(16,185,129,0.12); color: #065f46'
 
-# sidebar
+# Sidebar
 st.sidebar.title("🎓 Umeed Rise")
 page = st.sidebar.radio("Navigate", [
     "🏠 Home",
@@ -344,9 +286,8 @@ page = st.sidebar.radio("Navigate", [
 # Home
 if page.startswith("🏠"):
     st.markdown('<div class="umeed-card"><div class="umeed-header">🎓 Umeed Rise – AI-Based Student Dropout Prediction & Counseling</div>', unsafe_allow_html=True)
-    st.write("Upload any student dataset, train robust models, understand risks via explainability, and generate actionable counseling suggestions. Designed for stability, clarity, and production readiness.")
+    st.write("Upload any student dataset, train robust models, understand risks via explainability, and generate actionable counseling suggestions. Stable, modern, and production-ready.")
     st.markdown('<div class="umeed-pill">Modern UI • Robust ML • Explainability • Counseling</div></div>', unsafe_allow_html=True)
-    st.markdown('<div class="umeed-section"></div>', unsafe_allow_html=True)
     st.info("Use the sidebar to upload data, train, explore dashboards, explain predictions, and generate risk-based suggestions.")
 
 # Upload + Train
@@ -370,6 +311,7 @@ elif page.startswith("📤"):
                     X, y, pipe, feat_cols, num_cols, cat_cols, le_map = preprocess(df, target_col, id_use)
                     algo = st.radio("Model", ["XGBoost (preferred)","RandomForest (fallback)"])
                     algo_choice = "XGBoost" if "XGBoost" in algo else "RandomForest"
+                    st.session_state["shap_sample"] = st.slider("SHAP sample size", min_value=100, max_value=1000, value=st.session_state.get("shap_sample", 300), step=50, help="Reduce for faster explainability on large datasets")
                     if st.button("Train Model", type="primary"):
                         with st.spinner("Training model..."):
                             full, clf, metrics, proba, pred, X_test, y_test = train_model(pipe, X, y, algo_choice)
@@ -381,8 +323,6 @@ elif page.startswith("📤"):
                         st.session_state["cat_cols"] = cat_cols
                         st.session_state["target_col"] = target_col
                         st.session_state["id_col"] = id_use
-                        st.session_state["classes_"] = sorted(list(le_map.keys()), key=lambda x: 0 if x==list(le_map.keys())[0] else 1)
-                        st.session_state["positive_class"] = list(le_map.keys())[0]
                         st.session_state["metrics"] = metrics
                         st.session_state["X_test"] = X_test
                         st.session_state["y_test"] = y_test
@@ -415,23 +355,18 @@ elif page.startswith("📈"):
         top_risk = df_dash.head(20)
 
         col1, col2 = st.columns([1,1])
-        with col1:
-            st.plotly_chart(fig_hist, use_container_width=True)
-        with col2:
-            st.plotly_chart(pie, use_container_width=True)
+        with col1: st.plotly_chart(fig_hist, use_container_width=True)
+        with col2: st.plotly_chart(pie, use_container_width=True)
 
         st.markdown('<div class="umeed-header">🏅 Top-Risk Students</div>', unsafe_allow_html=True)
-        st.dataframe(
-            top_risk.style.apply(lambda s: [color_risk(v) if s.index.name != None else "" for v in s["Risk Level"]], axis=1),
-            use_container_width=True
-        )
+        st.dataframe(top_risk.style.apply(lambda s: [color_risk(v) for v in s["Risk Level"]], axis=1), use_container_width=True)
 
         try:
-            explainer, shap_vals, feat_names, Xt = shap_explain(st.session_state["pipeline"], X_test)
+            shap_vals, Xt_full, feat_names, Xt = compute_shap_values(st.session_state["pipeline"], X_test, st.session_state.get("shap_sample", 300))
             if shap_vals is not None and len(feat_names) > 0:
                 st.markdown('<div class="umeed-header">🔥 Feature Importance (SHAP)</div>', unsafe_allow_html=True)
                 fig, ax = plt.subplots(figsize=(8,6))
-                shap.summary_plot(shap_vals.values if hasattr(shap_vals, "values") else shap_vals, features=Xt[:len(shap_vals)], feature_names=feat_names, plot_type="bar", show=False)
+                shap.summary_plot(shap_vals.values if hasattr(shap_vals, "values") else shap_vals, features=Xt, feature_names=feat_names, plot_type="bar", show=False)
                 st.pyplot(fig, clear_figure=True, use_container_width=True)
         except Exception:
             st.info("SHAP importance not available for this model or dataset.")
@@ -447,19 +382,16 @@ elif page.startswith("🧮"):
             try:
                 newdf = load_data(up2)
                 idc = st.session_state["id_col"]
-                if idc and idc in newdf.columns:
-                    id_series = newdf[idc]
-                else:
-                    id_series = pd.Series(range(len(newdf)), name=idc if idc else "Index")
+                id_series = newdf[idc] if (idc and idc in newdf.columns) else pd.Series(range(len(newdf)), name=idc if idc else "Index")
                 feats = st.session_state["feature_cols"]
                 for c in feats:
-                    if c not in newdf.columns:
-                        newdf[c] = np.nan
+                    if c not in newdf.columns: newdf[c] = np.nan
                 newdf = newdf[feats]
                 pipe = st.session_state["pipeline"]
                 proba = pipe.predict_proba(newdf)
                 pred = pipe.predict(newdf)
-                table = predictions_table(pd.DataFrame({idc if idc else "Index": id_series}), idc, proba, pred)
+                src = pd.DataFrame({idc if idc else "Index": id_series})
+                table = predictions_table(src, idc, proba, pred)
                 st.dataframe(table.style.apply(lambda s: [color_risk(v) for v in s["Risk Level"]], axis=1), use_container_width=True)
                 csv = table.to_csv(index=False).encode("utf-8")
                 st.download_button("Download Predictions CSV", data=csv, file_name="umeed_rise_predictions.csv", mime="text/csv")
@@ -474,12 +406,13 @@ elif page.startswith("🧠"):
         X_test = st.session_state["X_test"]
         pipe = st.session_state["pipeline"]
         st.markdown('<div class="umeed-card"><div class="umeed-header">🧠 SHAP Explainability</div>', unsafe_allow_html=True)
+        st.session_state["shap_sample"] = st.slider("SHAP sample size", min_value=100, max_value=1000, value=st.session_state.get("shap_sample", 300), step=50)
         try:
-            explainer, shap_vals, feat_names, Xt = shap_explain(pipe, X_test)
+            shap_vals, Xt_full, feat_names, Xt = compute_shap_values(pipe, X_test, st.session_state["shap_sample"])
             if shap_vals is not None and len(feat_names) > 0:
                 st.markdown('<div class="umeed-pill">Global Importance</div>', unsafe_allow_html=True)
                 fig1, ax1 = plt.subplots(figsize=(8,6))
-                shap.summary_plot(shap_vals.values if hasattr(shap_vals, "values") else shap_vals, features=Xt[:len(shap_vals)], feature_names=feat_names, show=False)
+                shap.summary_plot(shap_vals.values if hasattr(shap_vals, "values") else shap_vals, features=Xt, feature_names=feat_names, show=False)
                 st.pyplot(fig1, clear_figure=True, use_container_width=True)
 
                 st.markdown('<div class="umeed-pill">Per-Student Explanation</div>', unsafe_allow_html=True)
